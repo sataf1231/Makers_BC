@@ -30,8 +30,9 @@ class Buku(db.Model):
 	judul = db.Column(db.String(50), nullable=False)
 	jml_halaman = db.Column(db.Integer, default=False)
 	thn_rilis = db.Column(db.Integer, nullable=False)
+	kuantitas = db.Column(db.Integer, nullable=False)
 	kategori_id = db.Column(db.String(5), db.ForeignKey('kategori.id_kategori'), nullable=False)
-	buku_penulis = db.relationship('Penulis',backref='book', secondary='penulis_buku')
+	buku_penulis = db.relationship('Penulis',backref='author_book', secondary='penulis_buku')
 	
 	def __repr__(self):
 		return f'Buku: <{self.judul}>'
@@ -57,14 +58,13 @@ class User(db.Model):
 		return f'User <{self.name}>'
 
 class Peminjaman(db.Model):
-	id_user = db.Column(db.Integer, primary_key=True, index=True)
-	nama_peminjam = db.Column(db.String(20), nullable=False)
+	id_peminjaman = db.Column(db.Integer, primary_key=True, index=True)
 	tgl_pinjam = db.Column(db.Date, nullable=False)
-	tgl_pengembalian = db.Column(db.Date, nullable=False)
+	tgl_kembali = db.Column(db.Date, nullable=False)
 	buku_id = db.Column(db.String(5), db.ForeignKey('buku.id_buku'), nullable=False)
 	user_id = db.Column(db.Integer, db.ForeignKey('user.id_user'), nullable=False)
 	admin_id = db.Column(db.Integer, db.ForeignKey('user.id_user'), nullable=False)
-	# buku_ = db.relationship('Buku', backref='pinjam', lazy='dynamic')
+	book = db.relationship('Buku', backref='book', lazy=True)
 
 	def __repr__(self):
 		return f'Peminjaman <{self.tgl_pinjam}>'
@@ -86,16 +86,23 @@ def auth(a):
 	lis = c.split(':')
 	username = lis[0]
 	passwords = lis[1]
-	user = User.query.filter_by(username=username).first()
-	passw = User.query.filter_by(password=passwords).first()
-	if not user or not passw:
+	user = User.query.filter_by(username=username).filter_by(password=passwords).first()
+	if not user:
 		return 'Check your login details.'
 	elif not user.is_admin:
 		return False
 	elif user.is_admin == True:
 		return True
 
+def auth_admin(auth):
+    # decode_var = request.headers.get('Authorization')
+    c = base64.b64decode(auth[6:])
+    e = c.decode("ascii")
+    lis = e.split(':')
+    username = lis[0]
+    passw = lis [1]
 
+    return [username, passw]
 
 #------------Kategori-------------
 #Get Data
@@ -275,8 +282,11 @@ def get_buku():
 	if allow == True or False:
 		return jsonify([
 			{
-				'id': buku.id_buku, 'judul': buku.judul, 'jumlah halaman': buku.jml_halaman,
+				'id': buku.id_buku, 
+				'judul': buku.judul, 
+				'jumlah halaman': buku.jml_halaman,
 				'tahun terbit':buku.thn_rilis,
+				'kuantitas': buku.kuantitas,
 				'kategori':{
 					'genre': buku.category.genre,
 				},
@@ -300,8 +310,10 @@ def get_buku_id(id):
 		buku = Buku.query.filter_by(id_buku=id).first_or_404()
 		return jsonify([
 			{
-				'id': buku.id_buku, 'judul': buku.judul, 'jumlah halaman': buku.jml_halaman,
+				'id': buku.id_buku, 'judul': buku.judul, 
+				'jumlah halaman': buku.jml_halaman,
 				'tahun terbit':buku.thn_rilis,
+				'kuantitas': buku.kuantitas,
 				'kategori':{
 					'genre': buku.category.genre,
 				},
@@ -345,6 +357,7 @@ def create_buku():
 				judul=data['judul'],
 				jml_halaman=data['jml_halaman'], 
 				thn_rilis=data['thn_rilis'], 
+				kuantitas=data['kuantitas'],
 				kategori_id = k.id_kategori 
 			)
 		db.session.add(b)
@@ -354,6 +367,7 @@ def create_buku():
 			'judul': b.judul, 
 			'jumlah halaman': data['jml_halaman'],
 			'tahun terbit':data['thn_rilis'],
+			'kuantitas':data['kuantitas'],
 			'category':{
 				'genre':b.category.genre
 			}
@@ -447,6 +461,26 @@ def create_author_book():
 	},201
 
 #---------------------User------------------
+#Get Data Per ID
+@app.route('/user/')
+def get_user():
+	decode = request.headers.get('Authorization')
+	allow = auth(decode)
+	if allow == True or False:
+		return jsonify([
+			{
+				'id': user.id_user, 
+				'name': user.name, 
+				'username':user.username,
+				'password':user.password, 
+				'is_admin':user.is_admin
+				}for user in User.query.all()
+		])
+	else:
+		return{
+		 'message':'Access Failed'
+	},401
+
 #Insert data
 @app.route('/user/', methods=['POST'])
 def create_user():
@@ -473,8 +507,11 @@ def create_user():
 		db.session.add(u)
 		db.session.commit()
 		return {
-			'id': u.id_user, 'nama': u.name, 'username': u.username,
-			'password': u.password, 'is_admin': u.is_admin
+			'id': u.id_user, 
+			'nama': u.name, 
+			'username': u.username,
+			'password': u.password, 
+			'is_admin': u.is_admin
 		}, 201
 	elif allow == False:
 		return 'Youre not Admin'
@@ -482,31 +519,114 @@ def create_user():
 		return allow
 
 #----------------------Peminjaman------------------
-# @app.route('/peminjaman/', methods=['POST'])
-# def create_rent():
-# 	data = request.get_json()
-# 	if not 'username' in data or not 'name' in data:
-# 		return jsonify({
-# 			'error': 'Bad Request',
-# 			'message': 'Name or Username not given'
-# 		}), 400
-# 	if len(data['username']) < 4 :
-# 		return jsonify({
-# 			'error': 'Bad Request',
-# 			'message': 'Name and email must be contain minimum of 4 letters'
-# 		}), 400
-# 	u = Peminjaman( 
-# 			name_peminjaman=data['nama_peminjaman'],
-# 			tgl_pinjam=data['tgl_pinjam'], 
-# 			tgl_pengembalian=data['tgl_pengembalian'],
-# 			buku_id=data[]
-# 		)
-# 	db.session.add(u)
-# 	db.session.commit()
-# 	return {
-# 		'id': u.id_user, 
-# 		'nama': u.name, 
-# 		'username': u.username,
-# 		'password': u.password, 
-# 		'is_admin': u.is_admin
-# 	}, 201
+#Get Rent
+@app.route('/peminjaman/')
+def get_rent():
+    return jsonify([
+        {
+            'id_peminjaman': rent.id_peminjaman,
+            'tgl_pinjam': rent.tgl_pinjam,
+            'tgl_kembali': rent.tgl_kembali,
+            'user_id' : rent.user_id,
+            'buku_id' : {
+                "id_buku" : rent.book.id_buku,
+                "judul" : rent.book.judul,
+				"kuantitas": rent.book.kuantitas
+            },
+            'admin_id': rent.admin_id
+        } for rent in Peminjaman.query.all()
+    ]),200
+
+#Insert Rent
+@app.route('/peminjaman/', methods=['POST'])
+def create_rent():
+	decode = request.headers.get('Authorization')
+	allow = auth(decode)
+	if allow == True:
+		data = request.get_json()
+		user = User.query.filter_by(name=data['name']).first()
+		if 'name' not in data:
+			return jsonify({
+                'error': 'Bad Request',
+                ' message': 'Name not given'
+            }), 400
+		for i in data['judul']:
+			book = Buku.query.filter_by(judul=i).first()
+			if not book:
+				return jsonify({
+                    'error': 'Bad Request',
+                    ' message': 'Title not given'
+                }), 400
+			if book.kuantitas == 0:
+				return jsonify({
+                    'error': 'Bad Request',
+                    ' message': 'Title not given'
+                }), 400
+			admin = auth_admin(decode)[0]
+			admin_ = User.query.filter_by(username=admin).first()
+			for x in data['judul']:
+				book = Buku.query.filter_by(judul=x).first()
+				rent = Peminjaman(
+					tgl_pinjam=data['tgl_pinjam'], 
+                    tgl_kembali=data['tgl_kembali'], 
+                    buku_id=book.id_buku,
+                    user_id=user.id_user,
+                    admin_id=admin_.id_user
+                )
+			book.kuantitas -= 1
+		db.session.add(rent)
+		db.session.commit()
+		return {
+            "message" :  "success"
+            # 'id': rent.public_id,
+            # 'date rent': rent.date_rent, 
+            # 'date return': rent.date_return,
+            # 'user_id' : {
+            #     rent.rent.user_id
+            # },
+            # 'book_id' : {
+            #     rent.book.title
+            # },
+            # 'is admin': rent.rent.is_admin
+        }, 201
+	else:
+		return{
+			"message":"Access Denied"
+		},401
+
+#Update Rent
+@app.route('/peminjaman/<id>/', methods=['PUT'])
+def update_rent(id):
+    decode_var = request.headers.get('Authorization')
+    allow = auth(decode_var)
+    if allow == True:
+        data = request.get_json()
+        rent = Peminjaman.query.filter_by(id_peminjaman=id).first_or_404()
+        books = Buku.query.filter_by(id_buku=rent.buku_id).first_or_404()
+        rent.tgl_kembali = data['tgl_kembali']
+        books.kuantitas +=1
+        db.session.commit()
+        return {
+            'message': 'success'
+        }
+    else:
+        return{
+            'message': 'Access denied'
+        }, 401
+
+#Delete Data
+@app.route('/peminjaman/', methods=['DELETE'] )
+def delete_rent(id):
+	decode = request.headers.get('Authorization')
+	allow = auth(decode)
+	if allow == True:
+		b = Buku.query.filter_by(id_peminjaman=id).first_or_404()
+		db.session.delete(b)
+		db.session.commit()
+		return {
+			'success': 'Data deleted successfully'
+		}
+	elif allow == False:
+		return 'Youre not Admin'
+	elif allow == 'Check your login details.':
+		return allow
