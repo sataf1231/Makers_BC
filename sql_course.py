@@ -22,7 +22,7 @@ class Category(db.Model):
 	catecourse = db.relationship('Course', backref='catecourse')
 
 	def __repr__(self):
-		return f'Category: <{self.name}>'
+		return f'Category: <{self.name_category}>'
 
 class Course(db.Model):
 	id = db.Column(db.Integer, primary_key=True)
@@ -30,10 +30,10 @@ class Course(db.Model):
 	desc = db.Column(db.String(100), nullable=False)
 	category_id = db.Column(db.Integer, db.ForeignKey('category.id'), nullable=False)
 	instructure_id = db.Column(db.Integer, db.ForeignKey('instructure.id'), nullable=False)
-	# courseuser = db.relationship('User', backref='courseuser')
+	courseenroll = db.relationship('Enroll', backref='courseenroll')
 
 	def __repr__(self):
-		return f'Course: <{self.name}>'
+		return f'Course: <{self.name_course}>'
 
 class Instructure(db.Model):
 	id = db.Column(db.Integer, primary_key=True)
@@ -43,20 +43,52 @@ class Instructure(db.Model):
 	instcourse = db.relationship('Course', backref='instcourse')
 
 	def __repr__(self):
-		return f'Instructure: <{self.name}>'
+		return f'Instructure: <{self.name_instructure}>'
 
 class User(db.Model):
 	id = db.Column(db.Integer, primary_key=True)
 	name_user = db.Column(db.String(20), nullable=False)
 	username = db.Column(db.String(20), nullable=False)
 	password = db.Column(db.String(20), nullable=False)
-	# usercourse = db.relationship('Course', backref='usercourse')
-
+	userenroll = db.relationship('Enroll', backref='userenroll')
 	def __repr__(self):
-		return f'User: <{self.name}>'
+		return f'User: <{self.name_user}>'
 
-# db.create_all()
-# db.session.commit()
+class Enroll(db.Model):
+	id = db.Column(db.Integer, primary_key=True, index=True)
+	date_enroll = db.Column(db.Date)
+	course_id = db.Column(db.Integer, db.ForeignKey('course.id'), nullable=False)
+	user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+	is_complete = db.Column(db.Boolean, default=False)
+
+db.create_all()
+db.session.commit()
+
+#---------------Auth-------------------
+def auth(a):
+	# a = request.headers.get('Authorization')
+	b = base64.b64decode(a[6:])
+	c = b.decode("ascii")
+	lis = c.split(':')
+	username = lis[0]
+	passwords = lis[1]
+	user = User.query.filter_by(username=username).filter_by(password=passwords).first()
+	if not user:
+		return 'Check your login details.'
+	elif not user:
+		return False
+	elif user.is_admin == True:
+		return True
+
+def auth_admin(auth):
+    # decode_var = request.headers.get('Authorization')
+    c = base64.b64decode(auth[6:])
+    e = c.decode("ascii")
+    lis = e.split(':')
+    username = lis[0]
+    passw = lis [1]
+
+    return [username, passw]
 
 #----------------Category------------------
 #Get
@@ -182,6 +214,7 @@ def delete_user(id):
 		return {
 			'success': 'Data deleted successfully'
 		}
+
 #-------------Instruktur----------------------
 #Get
 @app.route('/instructure/')
@@ -246,6 +279,7 @@ def delete_instructure(id):
 		return {
 			'success': 'Data deleted successfully'
 		}
+
 #-------------Course----------------------
 #Get
 @app.route('/course/')
@@ -314,26 +348,92 @@ def update_course(id):
 			'error': 'Bad Request',
 			'message': 'Name field needs to be present'
 		}, 400
-	cate = Category.query.filter_by(id=id).first()
-	inst = Instructure.query.filter_by(id=id).first()
+	cate = Category.query.filter_by(name_category=data['name_category']).first_or_404()
 	course = Course.query.filter_by(id=id).first_or_404()
 	course.name_course=data['name_course']
 	course.desc=data['desc']
+	course.category_id= cate.id
 	db.session.commit()
 	return{
 		'message':'Success'
 	}
-	# return jsonify({
-	# 	'name':course.name_course,
-	# 	'description':course.desc,
-	# 	'category':cate.name_category,
-	# 	'instructure':inst.name_instructure
-	# 	})
 #Delete
 @app.route('/course/<id>/', methods=['DELETE'] )
 def delete_course(id):
 		c = Course.query.filter_by(id=id).first_or_404()
 		db.session.delete(c)
+		db.session.commit()
+		return {
+			'success': 'Data deleted successfully'
+		}
+
+#----------------Enroll-------------
+#Get
+@app.route('/enroll/')
+def get_enroll():
+	return jsonify([
+			{
+				'id enroll': n.id,
+				'user': {
+					"user":n.userenroll.username
+				},
+				'date_enroll': n.date_enroll,  
+				'course':{
+					"course":n.courseenroll.name_course
+				},
+				'is complete': n.is_complete
+				} for n in Enroll.query.all()
+		])
+#Insert
+@app.route('/enroll/', methods=['POST'])
+def create_enroll():
+		data = request.get_json()
+		user = User.query.filter_by(username=data['username']).first()
+		if not user:
+			return jsonify({
+				'error': 'Bad Request',
+				'message': 'username not given'
+			}), 400
+		cour = Course.query.filter_by(name_course=data['name_course']).first()
+		if not cour:
+			return jsonify({
+				'error': 'Bad Request',
+				'message': 'Course invalid'
+			}), 400
+		enroll = Enroll.query.filter_by(user_id=user.id).filter_by(is_complete=False).count()
+		if enroll == 3:	
+			return {
+				'message': 'Already have 3 course'
+			}
+		n = Enroll(
+				date_enroll=data['date_enroll'], 
+				course_id=cour.id,
+				user_id=user.id,
+				is_complete=data.get('is complete', False)
+			)
+		db.session.add(n)
+		db.session.commit()
+		return{
+			'date enroll':n.date_enroll,
+			'course':n.course_id,
+			'user':n.user_id,
+			'is complete':n.is_complete
+		}
+#Update
+@app.route('/enroll/<id>/', methods=['PUT'])
+def update_enroll(id):
+	# data = request.get_json()
+	e = Enroll.query.filter_by(id=id).first_or_404()
+	e.is_complete = True
+	db.session.commit()
+	return jsonify({
+		'id': e.id, 'date enroll': e.date_enroll, 'course':e.course_id,'user':e.user_id, 'is complete':e.is_complete
+		})
+#Delete
+@app.route('/enroll/<id>/', methods=['DELETE'] )
+def delete_enroll(id):
+		e = Enroll.query.filter_by(id=id).first_or_404()
+		db.session.delete(e)
 		db.session.commit()
 		return {
 			'success': 'Data deleted successfully'
